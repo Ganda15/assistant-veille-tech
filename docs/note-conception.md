@@ -175,7 +175,64 @@ Collection unique **`articles`** (espace **cosine**). Pour chaque chunk :
 
 ---
 
-## 7. Synthèse des décisions (à valider)
+## 7. Stratégie de retrieval & injection runtime
+
+Au moment du chat (`app/chat.py`), deux canaux alimentent le LLM :
+
+| Paramètre | Valeur | Justification |
+|-----------|--------|---------------|
+| `n_results` (Chroma) | **k = 8** | Assez de contexte pour une synthèse de tendances sans noyer le LLM. C'est la valeur déjà câblée dans `retrieval.retrieve(query, k=8)`. |
+| Mesure de similarité | **cosine** | Vecteurs e5 normalisés → la distance cosine sépare bien les sujets. Fixé via `metadata={"hnsw:space": "cosine"}` côté collection. |
+| Filtres metadata | **optionnels** (phase 2) | Possibilité de filtrer par `source` ou plage de `date` via la clause `where` de Chroma (ex. `where={"source": "GitHub Changelog"}`). En phase 1 : retrieval sémantique pur, simple et robuste. |
+| Fenêtre signaux frais | **`since` ≈ 24–48 h** | `fresh_news.fetch(topics, since)` borne l'appel NewsAPI live à l'actu récente non indexée. |
+| Fusion | retrieved (k=8) **+** enriched (hook) **+** fresh | Concaténés puis passés à `compose_answer()` → le LLM cite ses sources via les cartes. |
+
+**Construction de la requête.** La question utilisateur est augmentée des sujets sélectionnés
+(`_expand_query` : `"question | python, ai-ml"`) avant embedding. Cela ancre la recherche sémantique
+sur les sujets cochés dans l'UI.
+
+---
+
+## 8. Mapping sujets → requêtes sources
+
+Les 5 sujets populaires de l'UI (`app/main.py`) orientent la collecte et le retrieval :
+
+| Sujet (slug) | Mots-clés NewsAPI | Sources d'index pertinentes |
+|--------------|-------------------|-----------------------------|
+| `python` | python, pypi, fastapi | NewsAPI + (blogs Python en élargissement) |
+| `javascript` | javascript, node, typescript | NewsAPI + Next.js Blog |
+| `ai-ml` | ai, llm, openai, anthropic | NewsAPI + GitHub Changelog (Copilot…) |
+| `devops` | devops, docker, kubernetes, ci/cd | NewsAPI + GitHub Changelog |
+| `web` | web, react, next.js, vercel | NewsAPI + Next.js Blog |
+
+> La saisie libre reste possible (champ question) : le mot-clé brut sert alors directement de requête.
+
+---
+
+## 9. Reproductibilité, traçabilité & risques
+
+**Reproductibilité (critère de perf).** Un tiers avec un `.env` rempli lance :
+```bash
+make up        # docker compose : chromadb + backend + frontend
+make ingest    # scripts/ingest_cli.py → news + scrape → Chroma peuplé
+```
+L'`upsert` à `id` déterministe (`hash(url)_chunk_index`) rend l'ingestion **idempotente** :
+relancer `make ingest` n'introduit pas de doublons.
+
+**Risques identifiés et parades :**
+
+| Risque | Parade |
+|--------|--------|
+| Clé NewsAPI absente / quota dépassé | Le pipeline dégrade proprement (liste vide), le scraping RSS continue d'alimenter l'index. |
+| Structure HTML d'un article qui change | On privilégie les **flux RSS** (XML stable) ; le scraping HTML brut est limité à la phase 2. |
+| Source à rendu dynamique (JS) | **Écartée** (documenté §2), pas de navigateur headless en phase 1. |
+| Doublons inter-sources (même news) | Déduplication **par URL** (`cleaning.dedupe`). |
+| Articles sans date | `date = null` toléré (schéma `Article.date: datetime | None`). |
+| Boilerplate (nav/footer/pub) pollue les chunks | `strip_boilerplate` retire `nav`, `footer`, etc. avant le HTML→Markdown. |
+
+---
+
+## 10. Synthèse des décisions (à valider)
 
 1. **Sources** : NewsAPI (largeur) + GitHub Changelog RSS (profondeur officielle, **départ phase 1**) ;
    Next.js Blog RSS en élargissement. Dynamique (Vercel) écarté.
