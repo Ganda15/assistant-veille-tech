@@ -1,0 +1,118 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="820" height="1560" viewBox="-20 -70 820 1560" font-family="Segoe UI, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#555"/>
+    </marker>
+  </defs>
+
+  <!-- Titre -->
+  <text x="400" y="-30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1e3a5f">Pipeline de Veille Technologique — Nauda Palisse</text>
+  <text x="400" y="80" text-anchor="middle" font-size="12" font-weight="bold" fill="#6c8ebf">SOURCES</text>
+
+  <!-- ===================== EDGES ===================== -->
+  <!-- Sources -> cleaning (bus) -->
+  <path d="M131,190 L131,224 L681,224 L681,180" fill="none" stroke="#555" stroke-width="1.5"/>
+  <path d="M406,183 L406,224" fill="none" stroke="#555" stroke-width="1.5"/>
+  <path d="M400,224 L400,265" fill="none" stroke="#555" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- cleaning -> embeddings -->
+  <path d="M400,345 L400,435" fill="none" stroke="#555" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="410" y="395" font-size="11" fill="#666">chunks de texte</text>
+  <!-- embeddings -> chroma -->
+  <path d="M400,515 L400,605" fill="none" stroke="#555" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="410" y="565" font-size="11" fill="#666">vecteurs + métadonnées</text>
+
+  <!-- chroma -> retrieve / fresh_news -->
+  <path d="M400,695 L400,750 L200,750 L200,800" fill="none" stroke="#555" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <path d="M400,695 L400,750 L600,750 L600,800" fill="none" stroke="#555" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- retrieve / fresh_news -> chat -->
+  <path d="M200,880 L200,940 L400,940 L400,990" fill="none" stroke="#555" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <path d="M600,880 L600,940 L400,940 L400,990" fill="none" stroke="#555" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- chat -> llm -> front -->
+  <path d="M400,1070 L400,1170" fill="none" stroke="#555" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="410" y="1130" font-size="11" fill="#666">prompt complet</text>
+  <path d="M400,1250 L400,1355" fill="none" stroke="#555" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="410" y="1310" font-size="11" fill="#666">JSON { articles }</text>
+
+  <!-- ===================== BOXES ===================== -->
+  <!-- S1 NewsAPI -->
+  <rect x="41" y="110" width="180" height="80" rx="8" fill="#dae8fc" stroke="#6c8ebf" stroke-width="1.5"/>
+  <text x="131" y="138" text-anchor="middle" font-size="12" font-weight="bold" fill="#1f2a44">NewsAPI</text>
+  <text x="131" y="156" text-anchor="middle" font-size="11" fill="#1f2a44">/everything</text>
+  <text x="131" y="172" text-anchor="middle" font-size="11" fill="#1f2a44">tendances générales</text>
+
+  <!-- S2 GitHub Changelog -->
+  <rect x="316" y="103" width="180" height="80" rx="8" fill="#dae8fc" stroke="#6c8ebf" stroke-width="1.5"/>
+  <text x="406" y="131" text-anchor="middle" font-size="12" font-weight="bold" fill="#1f2a44">RSS — GitHub Changelog</text>
+  <text x="406" y="149" text-anchor="middle" font-size="11" fill="#1f2a44">github.blog/changelog</text>
+  <text x="406" y="165" text-anchor="middle" font-size="11" fill="#1f2a44">releases officielles</text>
+
+  <!-- S3 Next.js Blog -->
+  <rect x="591" y="100" width="180" height="80" rx="8" fill="#dae8fc" stroke="#6c8ebf" stroke-width="1.5"/>
+  <text x="681" y="128" text-anchor="middle" font-size="12" font-weight="bold" fill="#1f2a44">Blog Tech — Next.js</text>
+  <text x="681" y="146" text-anchor="middle" font-size="11" fill="#1f2a44">nextjs.org/feed.xml</text>
+  <text x="681" y="162" text-anchor="middle" font-size="11" fill="#1f2a44">contexte &amp; explications</text>
+
+  <!-- 2 cleaning -->
+  <rect x="280" y="265" width="240" height="80" rx="8" fill="#ffe6cc" stroke="#d6b656" stroke-width="1.5"/>
+  <text x="400" y="293" text-anchor="middle" font-size="12" font-weight="bold" fill="#7c2d12">2. cleaning.py</text>
+  <text x="400" y="311" text-anchor="middle" font-size="11" fill="#7c2d12">HTML → Markdown · dédup par URL</text>
+  <text x="400" y="327" text-anchor="middle" font-size="11" fill="#7c2d12">chunks ~1200 caractères</text>
+
+  <!-- 3 embeddings -->
+  <rect x="280" y="435" width="240" height="80" rx="8" fill="#ffd966" stroke="#d6a800" stroke-width="1.5"/>
+  <text x="400" y="463" text-anchor="middle" font-size="12" font-weight="bold" fill="#78350f">3. Embeddings</text>
+  <text x="400" y="481" text-anchor="middle" font-size="11" fill="#78350f">sentence-transformers (local)</text>
+  <text x="400" y="497" text-anchor="middle" font-size="11" fill="#78350f">multilingual-e5-small · 384 dimensions</text>
+
+  <!-- 4 chroma -->
+  <rect x="280" y="605" width="240" height="90" rx="8" fill="#e1d5e7" stroke="#9673a6" stroke-width="1.5"/>
+  <text x="400" y="633" text-anchor="middle" font-size="12" font-weight="bold" fill="#4c1d95">4. Chroma — Vector Store</text>
+  <text x="400" y="655" text-anchor="middle" font-size="11" fill="#7c3aed">title · source · date (YYYY-MM-DD)</text>
+  <text x="400" y="673" text-anchor="middle" font-size="11" fill="#7c3aed">url · tags · collected_at · chunk_index</text>
+
+  <!-- 5 retrieve -->
+  <rect x="100" y="800" width="200" height="80" rx="8" fill="#d5e8d4" stroke="#82b366" stroke-width="1.5"/>
+  <text x="200" y="828" text-anchor="middle" font-size="12" font-weight="bold" fill="#14532d">5. retrieval.retrieve(k=8)</text>
+  <text x="200" y="846" text-anchor="middle" font-size="11" fill="#14532d">Chroma → top-8 chunks</text>
+  <text x="200" y="862" text-anchor="middle" font-size="11" fill="#14532d">recherche sémantique (cosine)</text>
+
+  <!-- 6 fresh_news -->
+  <rect x="500" y="800" width="200" height="80" rx="8" fill="#d5e8d4" stroke="#82b366" stroke-width="1.5"/>
+  <text x="600" y="828" text-anchor="middle" font-size="12" font-weight="bold" fill="#14532d">6. fresh_news.fetch()</text>
+  <text x="600" y="846" text-anchor="middle" font-size="11" fill="#14532d">NewsAPI live ~24-48h</text>
+  <text x="600" y="862" text-anchor="middle" font-size="11" fill="#14532d">injecté directement</text>
+
+  <!-- 7 chat -->
+  <rect x="280" y="990" width="240" height="80" rx="8" fill="#d5e8d4" stroke="#82b366" stroke-width="1.5"/>
+  <text x="400" y="1018" text-anchor="middle" font-size="12" font-weight="bold" fill="#14532d">7. chat.py</text>
+  <text x="400" y="1036" text-anchor="middle" font-size="11" fill="#14532d">prompt = sujet saisi</text>
+  <text x="400" y="1052" text-anchor="middle" font-size="11" fill="#14532d">+ chunks Chroma + news fraîches</text>
+
+  <!-- 8 llm -->
+  <rect x="280" y="1170" width="240" height="80" rx="8" fill="#fff2cc" stroke="#d6b656" stroke-width="1.5"/>
+  <text x="400" y="1198" text-anchor="middle" font-size="12" font-weight="bold" fill="#713f12">8. Kimi-K2.6 — Azure AI</text>
+  <text x="400" y="1216" text-anchor="middle" font-size="11" fill="#713f12">synthèse ciblée sur le sujet</text>
+  <text x="400" y="1232" text-anchor="middle" font-size="11" fill="#713f12">sources citées</text>
+
+  <!-- 9 front -->
+  <rect x="255" y="1355" width="290" height="90" rx="8" fill="#f0f9ff" stroke="#0ea5e9" stroke-width="1.5"/>
+  <text x="400" y="1383" text-anchor="middle" font-size="12" font-weight="bold" fill="#075985">9. Front Next.js</text>
+  <text x="400" y="1401" text-anchor="middle" font-size="11" fill="#075985">[ sujet ] [ description ] [ Lancer → ]</text>
+  <text x="400" y="1419" text-anchor="middle" font-size="11" fill="#075985">cards : titre · source · date · tags · lien</text>
+
+  <!-- ===================== NUMBERS ===================== -->
+  <g font-size="13" font-weight="bold" fill="#ffffff" text-anchor="middle">
+    <circle cx="11" cy="150" r="15" fill="#1e3a5f"/><text x="11" y="155">1</text>
+    <circle cx="255" cy="305" r="15" fill="#1e3a5f"/><text x="255" y="310">2</text>
+    <circle cx="255" cy="475" r="15" fill="#1e3a5f"/><text x="255" y="480">3</text>
+    <circle cx="255" cy="650" r="15" fill="#1e3a5f"/><text x="255" y="655">4</text>
+    <circle cx="75" cy="840" r="15" fill="#1e3a5f"/><text x="75" y="845">5</text>
+    <circle cx="475" cy="840" r="15" fill="#1e3a5f"/><text x="475" y="845">6</text>
+    <circle cx="255" cy="1030" r="15" fill="#1e3a5f"/><text x="255" y="1035">7</text>
+    <circle cx="255" cy="1210" r="15" fill="#1e3a5f"/><text x="255" y="1215">8</text>
+    <circle cx="255" cy="1400" r="15" fill="#1e3a5f"/><text x="255" y="1405">9</text>
+  </g>
+</svg>

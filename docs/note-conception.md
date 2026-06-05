@@ -1,246 +1,134 @@
 # Note de conception — Assistant de veille technologique
 
-**Projet :** Nauda Palisse — pipeline d'ingestion + injection runtime pour l'assistant de veille
-**Auteur :** Era Ramalingam Gandakumar
-**Statut :** à valider par le formateur **avant** écriture du code (porte d'entrée du brief)
-**Périmètre :** collecte (API + scraping), nettoyage, chunking, indexation Chroma, signaux frais
+**Projet :** Nauda Palisse — pipeline d'ingestion et injection de news fraîches
+**Auteur :** Eramalingam Gandakumar
+**Statut :** à valider par le formateur avant écriture du code (porte d'entrée du brief)
+**Objet :** document préparatoire — collecte (API + scraping), nettoyage, chunking, indexation Chroma, signaux frais
 
----
+## Le problème que je dois résoudre
 
-## 1. Contexte et besoin
+Chez Nauda Palisse, l'équipe produit passe une demi-journée par semaine à faire de la veille, éparpillée entre Hacker News, Twitter, des changelogs et des newsletters. La CTO veut centraliser tout ça dans un assistant interne qui sache répondre à des questions concrètes comme « quelles tendances reviennent cette semaine ? » ou « quels changements côté Vercel ou Next.js ? ».
 
-L'équipe produit de Nauda Palisse (devs + PM + DevRel) perd une demi-journée par semaine de veille
-éparpillée (Hacker News, changelogs RSS, newsletters…). La CTO veut un **assistant interne** capable de
-répondre à des questions de type :
+La partie RAG (FastAPI, Chroma, LangChain et le modèle Kimi-K2.6 via Azure) ainsi que le frontend Next.js sont déjà en place, mais la base est vide. Mon travail consiste donc à construire toute la chaîne qui va la remplir : collecte, nettoyage, découpage, indexation, et l'injection des news fraîches au moment du chat.
 
-- « Quelles tendances reviennent cette semaine ? »
-- « Quels outils sont les plus cités sur le sujet X ? »
-- « Quels changements côté Vercel / OpenAI / Next.js cette semaine ? »
+Un point important a guidé mes choix : le code existant n'est pas neutre. La fonction `_build_cards` dans `app/rag/llm.py` lit déjà des clés précises (`title`, `source`, `date`, `url`, `tags`) pour fabriquer les cartes affichées à l'écran. Mes métadonnées ne sont donc pas un choix libre : si un chunk ne porte pas ces champs, la carte s'affiche vide. J'ai construit toute ma conception en partant de cette contrainte.
 
-La stack RAG (FastAPI + Chroma + LangChain → Azure AI Inference / **Kimi-K2.6**) et le frontend Next.js
-sont **déjà déployés sur une base vide**. Mon travail = **toute la collecte et l'injection runtime**.
+## 1. Les sources que je vais indexer
 
-> **Contrainte structurante héritée du code existant.**
-> Le module `app/rag/llm.py` (fonction `_build_cards`) lit déjà, pour fabriquer les cartes affichées
-> dans l'UI, exactement ces clés de métadonnées : **`title`, `source`, `date`, `url`, `tags`**.
-> Mon modèle de métadonnées n'est donc **pas un choix libre** : chaque chunk indexé dans Chroma **doit**
-> porter ces champs, sinon les cartes du frontend s'affichent vides.
+J'ai préféré commencer avec une source précise et bien structurée, valider que le pipeline fonctionne de bout en bout, puis élargir ensuite. L'idée n'est pas de vouloir « scraper tout le web ».
 
----
+J'ai retenu trois sources, chacune avec un rôle différent :
 
-## 2. Quelles sources indexer ? (et pourquoi)
+- **NewsAPI** (endpoint `/everything`) m'apporte de la **largeur** : c'est un agrégateur, donc il couvre les tendances générales et les sujets qui émergent un peu partout, à partir d'un mot-clé.
+- **Le changelog GitHub** (flux RSS `https://github.blog/changelog/feed/`) m'apporte de la **profondeur officielle** : ce sont des annonces vérifiées (nouvelles versions, dépréciations d'API). C'est ma source de départ.
+- **Le blog Next.js** (flux RSS `https://nextjs.org/feed.xml`) cible **l'écosystème web/JavaScript**, directement lié à la stack du SaaS. Je l'ajouterai en deuxième temps.
 
-Principe directeur : **commencer simple avec une source précise et structurée**, valider le pipeline de
-bout en bout, **puis élargir**. On ne cherche pas à « scraper tout le web ».
+**Pourquoi commencer par le changelog GitHub ?** En regardant le flux de près, j'ai vu qu'il expose le contenu complet de chaque article dans le champ `content:encoded`. Je récupère donc tout en une seule requête, sans avoir à aller chercher chaque page. Le flux RSS est aussi un format XML stable, qui ne casse pas quand le site change de design — contrairement au scraping HTML brut. Et c'est justement un changelog produit, l'une des trois catégories demandées dans le brief.
 
-| # | Source | Type | Accès | Ce qu'elle apporte à l'assistant |
-|---|--------|------|-------|----------------------------------|
-| **A** | **NewsAPI** (`/everything`) | API agrégateur | Clé API, JSON paginé | **Largeur** : tendances générales multi-sources sur un mot-clé/sujet. Couvre le bruit ambiant et les sujets émergents. |
-| **B** | **GitHub Changelog** (`https://github.blog/changelog/feed/`) | Changelog produit | **Flux RSS 2.0** | **Profondeur officielle** : annonces vérifiées (releases, dépréciations d'API). Le flux contient le HTML complet (`content:encoded`) + des `category` réutilisables en tags. |
-| **C** | **Next.js Blog** (`https://nextjs.org/feed.xml`) | Blog technique / annonces | **Flux RSS 2.0** | **Écosystème ciblé** (web / JavaScript) : releases et explications de fond. Le flux ne donne que le résumé → on va chercher l'article (cas « 1 article par page »). *Phase 2.* |
+Le scraping dépend beaucoup de la structure des pages, et j'ai identifié trois cas que je traite progressivement :
 
-**Justification du choix de départ (phase 1) : GitHub Changelog.**
-Le flux RSS expose un **XML stable** (insensible aux redesigns HTML) et, surtout, le **contenu complet
-dans `content:encoded`** : on récupère tout en **une seule requête**, prêt pour le nettoyage HTML→Markdown.
-C'est un **changelog produit**, l'une des trois catégories demandées par le brief, et la matière colle
-directement aux questions « Quels changements côté X cette semaine ? ».
+1. **Plusieurs articles sur une même page** : c'est le cas du flux RSS, qui contient une liste d'entrées. C'est ma phase 1.
+2. **Un article par page** : il faut alors aller chercher chaque page de détail et lire son contenu (par exemple le blog Next.js, dont le flux ne donne que le résumé). C'est ma phase 2.
+3. **Contenu chargé dynamiquement en JavaScript** : comme le changelog de Vercel. Je l'écarte volontairement pour l'instant, car il faudrait un navigateur automatisé (Playwright), ce qui sort du périmètre de cette première phase.
 
-**Le scraping dépend de la structure de la page** — trois cas, traités progressivement :
-1. **Plusieurs articles par page** → le flux RSS lui-même (liste de `<item>`). *Phase 1.*
-2. **Un article par page** → page de détail à parser (`<article>`), ex. Next.js Blog. *Phase 2.*
-3. **Contenu dynamique (rendu JS)** → ex. changelog Vercel. **Écarté en phase 1** : nécessiterait un
-   navigateur headless (Playwright), hors périmètre.
+## 2. Mes chunks et mes métadonnées
 
----
+**Granularité.** Je découpe le texte par taille, en morceaux d'environ 1200 caractères, plutôt qu'en tokens (ça m'évite de dépendre d'un tokenizer, et c'est cohérent avec la fonction `chunk(text, max_chars=1200)` du projet). Je n'indexe pas l'article entier d'un bloc, car un changelog peut être long et traiter plusieurs sujets : des chunks plus fins permettent de ramener le bon passage au moment de la recherche. À l'inverse, découper paragraphe par paragraphe serait trop fragmenté et ferait perdre le contexte. Le découpage à taille fixe, en coupant sur un espace pour ne pas casser un mot, est un bon compromis.
 
-## 3. Chunks et métadonnées
-
-### 3.1 Granularité des chunks
-- **Découpage par taille de caractères** (≈ **1200 caractères/chunk**), pas par tokens.
-  → Pas de dépendance à un tokenizer ; cohérent avec la signature `chunk(text, max_chars=1200)` de
-  `app/ingest/cleaning.py`.
-- **Pourquoi pas l'article entier ?** Un changelog peut être long et multi-sujets : des chunks plus fins
-  améliorent la **précision du retrieval** (on ramène le passage pertinent, pas tout l'article).
-- **Pourquoi pas le paragraphe pur ?** Trop fragmenté → perte de contexte. Le découpage à taille fixe
-  (avec coupe sur fin de phrase si possible) est un bon compromis simplicité/qualité pour la phase 1.
-
-### 3.2 Modèle de métadonnées (imposé par `llm.py` + traçabilité)
+**Métadonnées.** Chaque chunk indexé dans Chroma porte les champs suivants :
 
 | Champ | Type | Source | Rôle |
 |-------|------|--------|------|
 | `title` | str | titre article | Affiché sur la carte UI |
-| `source` | str | label normalisé (`"GitHub Changelog"`, `"NewsAPI"`, `"Next.js Blog"`) | Filtrage + affichage |
+| `source` | str | label normalisé (`"GitHub Changelog"`, `"NewsAPI"`…) | Filtrage + affichage |
 | `date` | str `YYYY-MM-DD` | date de publication normalisée | Tri / fraîcheur / affichage |
-| `url` | str | lien canonique de l'article | **Traçabilité** + bouton « Lire l'article » |
+| `url` | str | lien canonique de l'article | Traçabilité + bouton « Lire l'article » |
 | `tags` | list[str] | `category` RSS / sujets | Tags colorés UI |
-| `collected_at` | str ISO 8601 | horodatage de collecte | **Traçabilité** (date de collecte exigée par le brief) |
+| `collected_at` | str ISO 8601 | horodatage de collecte | Traçabilité (exigée par le brief) |
 | `chunk_index` | int | position du chunk dans l'article | Recomposition / debug |
 
-> **Traçabilité (critère de perf du brief).** `url` + `collected_at` garantissent que **chaque chunk
-> remonte jusqu'à sa source d'origine**.
+Les cinq premiers sont imposés par le frontend ; les deux derniers servent à garantir qu'on peut toujours remonter un chunk jusqu'à sa source, ce que le brief demande explicitement.
 
-### 3.3 Normalisation
-- **Dates** : tout format d'entrée (RFC 822 RSS `Wed, 18 Mar 2026 20:00:00 GMT`, ISO NewsAPI…) →
-  **`YYYY-MM-DD`** unique. Si date absente → `null`.
-- **Sources** : libellé **canonique** par source (pas l'URL brute du domaine). Une table de correspondance
-  domaine → label assure la cohérence d'affichage et de filtrage.
-- **Déduplication** : par **URL** (clé naturelle d'unicité). `cleaning.dedupe` supprime les doublons
-  d'URL ; les `id` de chunk sont dérivés de façon déterministe (`hash(url) + "_" + chunk_index`) →
-  un `upsert` répété **n'introduit pas de doublon**.
+**Normalisation.** Les dates arrivent dans des formats variés (le RSS utilise un format type `Wed, 18 Mar 2026 20:00:00 GMT`, NewsAPI un format ISO) ; je les ramène toutes à `YYYY-MM-DD`, et je laisse la date à `null` si elle est absente. Pour les sources, j'utilise un libellé propre et constant plutôt que l'URL brute du domaine, ce qui rend l'affichage et le filtrage cohérents. Enfin, je déduplique par URL : c'est la clé naturelle d'un article, et comme je construis l'identifiant d'un chunk de façon déterministe (un hash de l'URL + le numéro de chunk), relancer l'ingestion ne crée pas de doublons.
 
----
+## 3. Les signaux frais
 
-## 4. Signaux frais (`fresh_news`)
+Au moment du chat, je fais un appel en direct à NewsAPI pour récupérer l'actualité très récente (une fenêtre d'environ 24 à 48 heures) sur les sujets de la question. Ce sont des articles qui ne sont pas encore dans l'index.
 
-**Quoi :** au moment du chat, un appel **live** à **NewsAPI** récupère l'actualité **très récente**
-(fenêtre ~24–48 h) sur les sujets de la question — articles **non encore indexés** dans Chroma.
+Pourquoi un canal séparé de l'index Chroma ? Parce que l'index reflète l'état de la dernière ingestion, et il y a forcément un décalage. Or les questions de veille sont sensibles au temps (« cette semaine », « les derniers changements »). En injectant ces news au moment du chat, je m'assure que la toute dernière actualité apparaît, même si l'ingestion n'a pas encore tourné. C'est le rôle de `fetch(topics, since)` dans `app/runtime/fresh_news.py`. Les deux flux — l'index et les signaux frais — se rejoignent ensuite dans `app/chat.py` avant d'être envoyés au modèle.
 
-**Pourquoi un canal séparé de l'index ?**
-- L'index Chroma reflète l'état de la **dernière ingestion** (batch). Il y a forcément un **délai**.
-- Les questions de veille sont **temporellement sensibles** (« cette semaine », « les derniers changements »).
-- L'injection runtime garantit que la **toute dernière actu** apparaît, même si l'ingestion n'a pas
-  encore tourné. C'est le rôle de `app/runtime/fresh_news.py` (`fetch(topics, since)`).
-
-**Distinction clé à retenir :**
 | | Index Chroma | Signaux frais |
 |---|---|---|
-| Moment | **Batch** (ingestion) | **Runtime** (au chat) |
+| Moment | Batch (ingestion) | Runtime (au chat) |
 | Source | RSS + scraping + NewsAPI nettoyés, vectorisés | NewsAPI live |
-| Persistance | stocké/vectorisé | éphémère, non indexé |
+| Persistance | stocké / vectorisé | éphémère, non indexé |
 | Rôle | mémoire de la veille | dernière minute |
 
-Les deux flux **fusionnent dans `app/chat.py`** avant la composition LLM.
+## 4. Le schéma du flux
 
----
+![Schéma du flux de veille technologique](pipeline_nauda.svg)
 
-## 5. Architecture — schéma de flux complet
+<details><summary>Version Mermaid (texte)</summary>
 
 ```mermaid
 flowchart TD
-    subgraph SRC["SOURCES"]
-        A["NewsAPI /everything<br/>(tendances générales)"]
-        B["GitHub Changelog RSS<br/>content:encoded = HTML complet"]
-        C["Next.js Blog RSS<br/>(phase 2, 1 article/page)"]
+    subgraph SRC["Sources"]
+        A["NewsAPI /everything<br/>tendances générales"]
+        B["GitHub Changelog RSS<br/>contenu complet"]
+        C["Next.js Blog RSS<br/>phase 2"]
     end
 
     A --> ING["Collecte<br/>news_api.py / scraper.py"]
     B --> ING
     C --> ING
 
-    ING --> CL["Nettoyage — cleaning.py<br/>HTML→Markdown · strip boilerplate<br/>dédup par URL · chunk ~1200 car."]
-    CL --> EMB["Embeddings<br/>sentence-transformers<br/>multilingual-e5-small · 384 dim (local)"]
-    EMB --> CH["Chroma — collection 'articles'<br/>doc + vecteur + metadata<br/>title·source·date·url·tags·collected_at·chunk_index<br/>(cosine)"]
+    ING --> CL["Nettoyage — cleaning.py<br/>HTML vers Markdown · retrait du boilerplate<br/>déduplication par URL · découpage ~1200 car."]
+    CL --> EMB["Embeddings<br/>intfloat/multilingual-e5-small · 384 dimensions (local)"]
+    EMB --> CH["Chroma — collection 'articles'<br/>texte + vecteur + métadonnées<br/>title · source · date · url · tags · collected_at"]
 
-    CH --> RET["Retrieval — retrieval.retrieve(query, k=8)<br/>top-k sémantique"]
-    NEWS["fresh_news.fetch(topics, since)<br/>NewsAPI live ~24-48h"] --> CHAT
+    CH --> RET["Retrieval — retrieve(query, k=8)<br/>recherche sémantique"]
+    NEWS["fresh_news.fetch(topics, since)<br/>NewsAPI en direct (~24-48h)"] --> CHAT
 
     RET --> CHAT["chat.py<br/>question + chunks + news fraîches"]
-    CHAT --> LLM["Kimi-K2.6 — Azure AI<br/>synthèse + sources citées"]
-    LLM --> UI["Front Next.js<br/>cards : titre·source·date·snippet·tags·Lire l'article"]
+    CHAT --> LLM["Kimi-K2.6 (Azure)<br/>synthèse avec sources citées"]
+    LLM --> UI["Frontend Next.js<br/>cartes : titre · source · date · extrait · tags · lien"]
 ```
 
-**Légende du flux :** Sources → Collecte (API + scraping/RSS) → Nettoyage (HTML→MD, dédup, chunking,
-boilerplate) → Embeddings (local) → Indexation Chroma → Retrieval top-k **+** injection runtime des
-signaux frais → Composition LLM (Kimi-K2.6) → Cartes dans l'UI.
+</details>
 
-> **Correctifs par rapport au 1er jet de schéma** (alignés sur le code réel) :
-> - Embeddings = **sentence-transformers `multilingual-e5-small`, 384 dim, local** (et **non** OpenAI 1536).
-> - Chunking = **~1200 caractères** (et non « 500 tokens · overlap 50 »).
-> - La requête Chroma principale = **`retrieval.retrieve(k=8)`** (sémantique top-k) ; `enrich_retrieval()`
->   est un **hook de post-traitement optionnel**, pas la requête principale.
+En une phrase : les sources passent par la collecte (API et RSS), sont nettoyées et découpées, vectorisées par un modèle local, puis stockées dans Chroma ; au moment du chat, on combine les chunks retrouvés et les news fraîches, le modèle rédige une réponse sourcée, et le frontend l'affiche sous forme de cartes.
 
----
+Pour information, ce schéma a été calé sur le code réel : l'embedding se fait avec le modèle local `intfloat/multilingual-e5-small` (384 dimensions), pas avec un service externe, et la requête principale vers Chroma est `retrieve(query, k=8)`.
 
-## 6. Modèle des chunks stockés dans Chroma
+## 5. Le modèle d'un chunk dans Chroma
 
-Collection unique **`articles`** (espace **cosine**). Pour chaque chunk :
+La collection s'appelle `articles` et utilise la distance cosine. Chaque entrée correspond à un chunk et ressemble à ceci :
 
 ```jsonc
-// 1 entrée Chroma = 1 chunk
 {
-  "id":        "a1b2c3d4_0",                  // hash(url) + "_" + chunk_index (déterministe → upsert idempotent)
+  "id":        "a1b2c3d4_0",                  // hash(url) + "_" + numéro de chunk → idempotent
   "document":  "Texte Markdown nettoyé du chunk (~1200 caractères).",
-  "embedding": [/* 384 floats, multilingual-e5-small */],
+  "embedding": [/* 384 nombres, modèle intfloat/multilingual-e5-small */],
   "metadata": {
     "title":        "GitHub Copilot CLI — voice input",
-    "source":       "GitHub Changelog",       // label canonique normalisé
-    "date":         "2026-06-03",             // YYYY-MM-DD
+    "source":       "GitHub Changelog",
+    "date":         "2026-06-03",
     "url":          "https://github.blog/changelog/2026-06-03-...",
-    "tags":         ["copilot", "cli"],       // depuis <category> RSS
-    "collected_at": "2026-06-04T10:12:00Z",   // traçabilité
+    "tags":         ["copilot", "cli"],
+    "collected_at": "2026-06-04T10:12:00Z",
     "chunk_index":  0
   }
 }
 ```
 
----
+## Ce que je propose de valider
 
-## 7. Stratégie de retrieval & injection runtime
+En résumé, voici mes décisions :
 
-Au moment du chat (`app/chat.py`), deux canaux alimentent le LLM :
+1. **Sources** : NewsAPI pour la largeur, le changelog GitHub (RSS) comme point de départ, et le blog Next.js en élargissement. Les sources dynamiques sont écartées pour l'instant.
+2. **Chunks** : découpage à taille fixe (~1200 caractères), déduplication par URL, identifiant déterministe.
+3. **Métadonnées** : les cinq champs imposés par l'interface, plus `collected_at` et `chunk_index` pour la traçabilité ; dates et sources normalisées.
+4. **Signaux frais** : NewsAPI en direct sur 24-48 heures, injecté au moment du chat, séparé de l'index.
+5. **Embeddings** : modèle local `intfloat/multilingual-e5-small`, en 384 dimensions, distance cosine.
 
-| Paramètre | Valeur | Justification |
-|-----------|--------|---------------|
-| `n_results` (Chroma) | **k = 8** | Assez de contexte pour une synthèse de tendances sans noyer le LLM. C'est la valeur déjà câblée dans `retrieval.retrieve(query, k=8)`. |
-| Mesure de similarité | **cosine** | Vecteurs e5 normalisés → la distance cosine sépare bien les sujets. Fixé via `metadata={"hnsw:space": "cosine"}` côté collection. |
-| Filtres metadata | **optionnels** (phase 2) | Possibilité de filtrer par `source` ou plage de `date` via la clause `where` de Chroma (ex. `where={"source": "GitHub Changelog"}`). En phase 1 : retrieval sémantique pur, simple et robuste. |
-| Fenêtre signaux frais | **`since` ≈ 24–48 h** | `fresh_news.fetch(topics, since)` borne l'appel NewsAPI live à l'actu récente non indexée. |
-| Fusion | retrieved (k=8) **+** enriched (hook) **+** fresh | Concaténés puis passés à `compose_answer()` → le LLM cite ses sources via les cartes. |
-
-**Construction de la requête.** La question utilisateur est augmentée des sujets sélectionnés
-(`_expand_query` : `"question | python, ai-ml"`) avant embedding. Cela ancre la recherche sémantique
-sur les sujets cochés dans l'UI.
-
----
-
-## 8. Mapping sujets → requêtes sources
-
-Les 5 sujets populaires de l'UI (`app/main.py`) orientent la collecte et le retrieval :
-
-| Sujet (slug) | Mots-clés NewsAPI | Sources d'index pertinentes |
-|--------------|-------------------|-----------------------------|
-| `python` | python, pypi, fastapi | NewsAPI + (blogs Python en élargissement) |
-| `javascript` | javascript, node, typescript | NewsAPI + Next.js Blog |
-| `ai-ml` | ai, llm, openai, anthropic | NewsAPI + GitHub Changelog (Copilot…) |
-| `devops` | devops, docker, kubernetes, ci/cd | NewsAPI + GitHub Changelog |
-| `web` | web, react, next.js, vercel | NewsAPI + Next.js Blog |
-
-> La saisie libre reste possible (champ question) : le mot-clé brut sert alors directement de requête.
-
----
-
-## 9. Reproductibilité, traçabilité & risques
-
-**Reproductibilité (critère de perf).** Un tiers avec un `.env` rempli lance :
-```bash
-make up        # docker compose : chromadb + backend + frontend
-make ingest    # scripts/ingest_cli.py → news + scrape → Chroma peuplé
-```
-L'`upsert` à `id` déterministe (`hash(url)_chunk_index`) rend l'ingestion **idempotente** :
-relancer `make ingest` n'introduit pas de doublons.
-
-**Risques identifiés et parades :**
-
-| Risque | Parade |
-|--------|--------|
-| Clé NewsAPI absente / quota dépassé | Le pipeline dégrade proprement (liste vide), le scraping RSS continue d'alimenter l'index. |
-| Structure HTML d'un article qui change | On privilégie les **flux RSS** (XML stable) ; le scraping HTML brut est limité à la phase 2. |
-| Source à rendu dynamique (JS) | **Écartée** (documenté §2), pas de navigateur headless en phase 1. |
-| Doublons inter-sources (même news) | Déduplication **par URL** (`cleaning.dedupe`). |
-| Articles sans date | `date = null` toléré (schéma `Article.date: datetime | None`). |
-| Boilerplate (nav/footer/pub) pollue les chunks | `strip_boilerplate` retire `nav`, `footer`, etc. avant le HTML→Markdown. |
-
----
-
-## 10. Synthèse des décisions (à valider)
-
-1. **Sources** : NewsAPI (largeur) + GitHub Changelog RSS (profondeur officielle, **départ phase 1**) ;
-   Next.js Blog RSS en élargissement. Dynamique (Vercel) écarté.
-2. **Chunks** : taille fixe ≈ 1200 caractères, dédup par URL, `id` déterministe.
-3. **Métadonnées** : `title, source, date, url, tags` (imposés par l'UI) + `collected_at`, `chunk_index`
-   (traçabilité). Dates → `YYYY-MM-DD`, sources → label canonique.
-4. **Signaux frais** : NewsAPI live (~24–48 h) injecté au runtime, séparé de l'index.
-5. **Embeddings** : `multilingual-e5-small` local (384 dim), cosine.
-
-*Une fois cette note validée, démarrage du développement (`news_api.py`, `scraper.py`, `cleaning.py`,
-`fresh_news.py`, CLI).*
+Une fois ces choix validés, je passe au développement des modules de collecte, de nettoyage et d'injection.
