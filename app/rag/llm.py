@@ -24,17 +24,33 @@ SYSTEM_PROMPT = (
 
 
 @lru_cache(maxsize=1)
-def get_llm() -> AzureAIChatCompletionsModel | None:
+def get_llm():
     settings = get_settings()
-    if not settings.azure_ai_inference_endpoint or not settings.azure_ai_inference_api_key:
-        logger.info("Azure AI inference not configured — running in degraded mode")
-        return None
-    return AzureAIChatCompletionsModel(
-        endpoint=settings.azure_ai_inference_endpoint,
-        credential=settings.azure_ai_inference_api_key,
-        model=settings.azure_ai_inference_model,
-        temperature=0.2,
-    )
+
+    # Essai 1 — Azure
+    if settings.azure_ai_inference_endpoint and settings.azure_ai_inference_api_key:
+        try:
+            return AzureAIChatCompletionsModel(
+                endpoint=settings.azure_ai_inference_endpoint,
+                credential=settings.azure_ai_inference_api_key,
+                model=settings.azure_ai_inference_model,
+                temperature=0.2,
+            )
+        except Exception as exc:
+            logger.warning("Azure LLM indisponible : %s — fallback Groq", exc)
+
+    # Essai 2 — Groq
+    if settings.groq_api_key:
+        from langchain_groq import ChatGroq
+        logger.info("Utilisation de Groq comme LLM")
+        return ChatGroq(
+            api_key=settings.groq_api_key,
+            model="llama-3.1-8b-instant",
+            temperature=0.2,
+        )
+
+    logger.info("Aucun LLM configuré — mode dégradé")
+    return None
 
 
 def _format_context(retrieved: list[dict[str, Any]], fresh: list[dict[str, Any]]) -> str:
@@ -134,27 +150,62 @@ async def compose_answer(
         "context": _format_context(retrieved_chunks, fresh_articles),
     }
 
+    messages = [
+        SystemMessage(content=SYSTEM_PROMPT),
+        HumanMessage(content=json.dumps(user_payload, ensure_ascii=False)),
+    ]
+
     try:
-        msg = await llm.ainvoke(
-            [
-                SystemMessage(content=SYSTEM_PROMPT),
-                HumanMessage(content=json.dumps(user_payload, ensure_ascii=False)),
-            ]
-        )
+        msg = await llm.ainvoke(messages)
         raw = msg.content if isinstance(msg.content, str) else str(msg.content)
         answer = _extract_answer(raw)
     except Exception as exc:
-        logger.warning("LLM call failed: %s", exc)
-        answer = f"Synthèse indisponible (erreur LLM). {len(cards)} article(s) référencé(s)."
+        logger.warning("LLM call failed (%s) — trying Groq fallback", exc)
+        # Fallback Groq
+        try:
+            settings = get_settings()
+            if settings.groq_api_key:
+                from langchain_groq import ChatGroq
+                groq_llm = ChatGroq(
+                    api_key=settings.groq_api_key,
+                    model="llama-3.1-8b-instant",
+                    temperature=0.2,
+                )
+                msg = await groq_llm.ainvoke(messages)
+                raw = msg.content if isinstance(msg.content, str) else str(msg.content)
+                answer = _extract_answer(raw)
+                logger.info("Réponse générée via Groq fallback")
+            else:
+                raise exc
+        except Exception as exc2:
+            logger.warning("Groq fallback aussi échoué: %s", exc2)
+            answer = f"Synthèse indisponible (erreur LLM). {len(cards)} article(s) référencé(s)."
 
     return ChatResponse(answer=answer, cards=cards, status="ok")
 
 
 def _extract_answer(raw: str) -> str:
+    # Supprime les balises markdown ```json ... ```
+    cleaned = raw.strip()
+    if cleaned.startswith("```"):
+        lines = cleaned.split("\n")
+        start = 1
+        end = len(lines) - 1 if lines[-1].strip() == "```" else len(lines)
+        cleaned = "\n".join(lines[start:end]).strip()
+    # Essai 1 — JSON complet
     try:
-        data = json.loads(raw)
+        data = json.loads(cleaned)
         if isinstance(data, dict) and "answer" in data:
             return str(data["answer"])
     except json.JSONDecodeError:
         pass
-    return raw.strip()
+    # Essai 2 — Extrait juste le bloc JSON { ... }
+    try:
+        start = cleaned.index("{")
+        end = cleaned.rindex("}") + 1
+        data = json.loads(cleaned[start:end])
+        if isinstance(data, dict) and "answer" in data:
+            return str(data["answer"])
+    except (ValueError, json.JSONDecodeError):
+        pass
+    return cleaned

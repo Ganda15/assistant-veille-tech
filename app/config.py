@@ -19,6 +19,9 @@ class Settings(BaseSettings):
 
     news_api_key: str = ""
     news_api_base_url: str = "https://newsapi.org/v2"
+    groq_api_key: str = ""
+
+    groq_api_key: str = ""
 
     backend_port: int = 8000
     frontend_port: int = 3000
