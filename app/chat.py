@@ -11,10 +11,27 @@ from app.schemas import ChatRequest, ChatResponse
 logger = logging.getLogger(__name__)
 
 
+SOURCE_BY_TOPIC = {
+    "javascript": "Next.js Blog",
+    "nextjs": "Next.js Blog",
+    "python": "Python Docs",
+    "github": "GitHub Changelog",
+}
+
+
+def _build_where(topics: list[str]) -> dict | None:
+    for t in topics:
+        src = SOURCE_BY_TOPIC.get(t.lower())
+        if src:
+            return {"source": {"$eq": src}}
+    return None
+
+
 async def handle_chat(req: ChatRequest) -> ChatResponse:
     query = _expand_query(req.question, req.topics)
 
-    retrieved = retrieval.retrieve(query, k=8)
+    where = _build_where(req.topics)
+    retrieved = retrieval.retrieve(query, k=8, where=where)
 
     try:
         enriched = ingest_enrich.enrich_retrieval(retrieved)

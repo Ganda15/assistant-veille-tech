@@ -28,5 +28,10 @@ def get_collection() -> Collection:
     client = get_client()
     return client.get_or_create_collection(
         name=settings.chroma_collection,
-        metadata={"hnsw:space": "cosine"},
+        metadata={
+            "hnsw:space": "cosine",
+            "hnsw:M": 64,
+            "hnsw:construction_ef": 200,
+            "hnsw:search_ef": 100,
+        },
     )

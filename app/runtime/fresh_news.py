@@ -8,20 +8,13 @@ from typing import Any
 import requests
 
 from app.config import get_settings
+from app.utils import normalize_date
 
 logger = logging.getLogger(__name__)
 
 PAGE_SIZE = 20
 
-def _normalize_date(raw: str | None) -> str:
-    if not raw:
-        return ""
-    try:
-        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-        return dt.strftime("%Y-%m-%d")
-    except ValueError:
-        return ""
-    
+
 def _fetch_live(topic: str, since: datetime | None) -> list[dict[str, Any]]:
     settings = get_settings()
     if not settings.news_api_key:
@@ -63,7 +56,7 @@ def _fetch_live(topic: str, since: datetime | None) -> list[dict[str, Any]]:
         articles.append({
             "title":   (raw.get("title") or "Sans titre").strip(),
             "source":  (raw.get("source") or {}).get("name") or "NewsAPI",
-            "date":    _normalize_date(raw.get("publishedAt")),
+            "date":    normalize_date(raw.get("publishedAt")),
             "content": content or (raw.get("title") or ""),
             "url":     url,
             "tags":    [topic],

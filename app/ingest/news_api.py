@@ -14,27 +14,11 @@ from app.ingest.cleaning import clean_html_to_markdown, chunk, dedupe
 from app.rag.chroma_client import get_collection
 from app.rag.retrieval import embed
 from app.schemas import Article
+from app.utils import chunk_id, normalize_date
 
 logger = logging.getLogger(__name__)
 
 PAGE_SIZE = 20
-
-
-
-def _chunk_id(url: str, index: int) -> str:
-    h = hashlib.sha1(url.encode()).hexdigest()[:8]
-    return f"{h}_{index}"
-
-
-def _normalize_date(raw: str | None) -> str:
-    if not raw:
-        return ""
-    try:
-        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-        return dt.strftime("%Y-%m-%d")
-    except ValueError:
-        return ""
-
 
 
 def _parse_article(raw: dict[str, Any], topics: list[str]) -> Article | None:
@@ -44,7 +28,7 @@ def _parse_article(raw: dict[str, Any], topics: list[str]) -> Article | None:
 
     title = (raw.get("title") or "").strip()
     source_name = (raw.get("source") or {}).get("name") or "NewsAPI"
-    date_str = _normalize_date(raw.get("publishedAt"))
+    date_str = normalize_date(raw.get("publishedAt"))
 
     content = (raw.get("content") or raw.get("description") or "").strip()
     if "[+" in content:
@@ -84,7 +68,7 @@ def _upsert_chunks(articles: list[Article]) -> int:
         tags_str = ", ".join(article.tags)
 
         for i, piece in enumerate(pieces):
-            ids.append(_chunk_id(url_str, i))
+            ids.append(chunk_id(url_str, i))
             docs.append(piece)
             embeddings.append(embed(piece))
             metas.append({

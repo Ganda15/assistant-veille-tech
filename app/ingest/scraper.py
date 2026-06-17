@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -13,6 +12,7 @@ from bs4 import BeautifulSoup
 from app.ingest.cleaning import clean_html_to_markdown, chunk, dedupe
 from app.rag.chroma_client import get_collection
 from app.rag.retrieval import embed
+from app.utils import chunk_id, normalize_date
 
 logger = logging.getLogger(__name__)
 
@@ -39,21 +39,6 @@ SOURCES = [
     },
 ]
 
-
-
-def _chunk_id(url: str, index: int) -> str:
-    h = hashlib.sha1(url.encode()).hexdigest()[:8]
-    return f"{h}_{index}"
-
-
-def _normalize_date(raw: str | None) -> str:
-    if not raw:
-        return ""
-    try:
-        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-        return dt.strftime("%Y-%m-%d")
-    except ValueError:
-        return ""
 
 
 RAW_DIR = Path("/srv/data/raw")
@@ -113,7 +98,7 @@ def _parse_rss_feed(source: dict[str, Any]) -> list[dict[str, Any]]:
             or entry.find("published")
             or entry.find("updated")
         )
-        date = _normalize_date(pub_tag.get_text(strip=True) if pub_tag else "")
+        date = normalize_date(pub_tag.get_text(strip=True) if pub_tag else "")
 
         if not url:
             continue
@@ -187,7 +172,7 @@ def _upsert_chunks(articles: list[dict[str, Any]]) -> int:
         url_str = str(article["url"])
 
         for i, piece in enumerate(pieces):
-            ids.append(_chunk_id(url_str, i))
+            ids.append(chunk_id(url_str, i))
             docs.append(piece)
             embeddings.append(embed(piece))
             metas.append({

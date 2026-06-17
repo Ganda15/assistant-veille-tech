@@ -2,8 +2,7 @@
 
 **Projet :** Nauda Palisse — pipeline d'ingestion et injection de news fraîches
 **Auteur :** Eramalingam Gandakumar
-**Statut :** à valider par le formateur avant écriture du code (porte d'entrée du brief)
-**Objet :** document préparatoire — collecte (API + scraping), nettoyage, chunking, indexation Chroma, signaux frais
+**Objet :** document préparatoire à valider avant le développement
 
 ## Le problème que je dois résoudre
 
@@ -37,15 +36,15 @@ Le scraping dépend beaucoup de la structure des pages, et j'ai identifié trois
 
 **Métadonnées.** Chaque chunk indexé dans Chroma porte les champs suivants :
 
-| Champ | Type | Source | Rôle |
-|-------|------|--------|------|
-| `title` | str | titre article | Affiché sur la carte UI |
-| `source` | str | label normalisé (`"GitHub Changelog"`, `"NewsAPI"`…) | Filtrage + affichage |
-| `date` | str `YYYY-MM-DD` | date de publication normalisée | Tri / fraîcheur / affichage |
-| `url` | str | lien canonique de l'article | Traçabilité + bouton « Lire l'article » |
-| `tags` | list[str] | `category` RSS / sujets | Tags colorés UI |
-| `collected_at` | str ISO 8601 | horodatage de collecte | Traçabilité (exigée par le brief) |
-| `chunk_index` | int | position du chunk dans l'article | Recomposition / debug |
+| Champ | Rôle |
+|-------|------|
+| `title` | titre affiché sur la carte |
+| `source` | nom normalisé de la source (« GitHub Changelog », « NewsAPI »…) |
+| `date` | date de publication, au format `YYYY-MM-DD` |
+| `url` | lien vers l'article original (bouton « Lire l'article ») |
+| `tags` | mots-clés, repris des catégories RSS |
+| `collected_at` | date de collecte, pour la traçabilité |
+| `chunk_index` | position du chunk dans l'article |
 
 Les cinq premiers sont imposés par le frontend ; les deux derniers servent à garantir qu'on peut toujours remonter un chunk jusqu'à sa source, ce que le brief demande explicitement.
 
@@ -57,44 +56,13 @@ Au moment du chat, je fais un appel en direct à NewsAPI pour récupérer l'actu
 
 Pourquoi un canal séparé de l'index Chroma ? Parce que l'index reflète l'état de la dernière ingestion, et il y a forcément un décalage. Or les questions de veille sont sensibles au temps (« cette semaine », « les derniers changements »). En injectant ces news au moment du chat, je m'assure que la toute dernière actualité apparaît, même si l'ingestion n'a pas encore tourné. C'est le rôle de `fetch(topics, since)` dans `app/runtime/fresh_news.py`. Les deux flux — l'index et les signaux frais — se rejoignent ensuite dans `app/chat.py` avant d'être envoyés au modèle.
 
-| | Index Chroma | Signaux frais |
-|---|---|---|
-| Moment | Batch (ingestion) | Runtime (au chat) |
-| Source | RSS + scraping + NewsAPI nettoyés, vectorisés | NewsAPI live |
-| Persistance | stocké / vectorisé | éphémère, non indexé |
-| Rôle | mémoire de la veille | dernière minute |
+Pour résumer la différence : l'index est la mémoire de la veille, constituée par lots ; les signaux frais sont la dernière minute, récupérée en direct et non stockée.
 
 ## 4. Le schéma du flux
 
 ![Schéma du flux de veille technologique](pipeline_nauda.svg)
 
-<details><summary>Version Mermaid (texte)</summary>
-
-```mermaid
-flowchart TD
-    subgraph SRC["Sources"]
-        A["NewsAPI /everything<br/>tendances générales"]
-        B["GitHub Changelog RSS<br/>contenu complet"]
-        C["Next.js Blog RSS<br/>phase 2"]
-    end
-
-    A --> ING["Collecte<br/>news_api.py / scraper.py"]
-    B --> ING
-    C --> ING
-
-    ING --> CL["Nettoyage — cleaning.py<br/>HTML vers Markdown · retrait du boilerplate<br/>déduplication par URL · découpage ~1200 car."]
-    CL --> EMB["Embeddings<br/>intfloat/multilingual-e5-small · 384 dimensions (local)"]
-    EMB --> CH["Chroma — collection 'articles'<br/>texte + vecteur + métadonnées<br/>title · source · date · url · tags · collected_at"]
-
-    CH --> RET["Retrieval — retrieve(query, k=8)<br/>recherche sémantique"]
-    NEWS["fresh_news.fetch(topics, since)<br/>NewsAPI en direct (~24-48h)"] --> CHAT
-
-    RET --> CHAT["chat.py<br/>question + chunks + news fraîches"]
-    CHAT --> LLM["Kimi-K2.6 (Azure)<br/>synthèse avec sources citées"]
-    LLM --> UI["Frontend Next.js<br/>cartes : titre · source · date · extrait · tags · lien"]
-```
-
-</details>
+Le même schéma au format Mermaid (il s'affiche directement sur GitHub) est dans `schema-flux.md`.
 
 En une phrase : les sources passent par la collecte (API et RSS), sont nettoyées et découpées, vectorisées par un modèle local, puis stockées dans Chroma ; au moment du chat, on combine les chunks retrouvés et les news fraîches, le modèle rédige une réponse sourcée, et le frontend l'affiche sous forme de cartes.
 

@@ -14,8 +14,8 @@ Nauda Palisse — assistant de veille technologique. RAG sur Chroma + injection 
 
 - **Backend** : Python 3.11, uv, FastAPI ≥0.115, Pydantic 2
 - **RAG** : ChromaDB 0.5, sentence-transformers 3 (`intfloat/multilingual-e5-small`)
-- **LLM** : LangChain 0.3 + `langchain-azure-ai` → Azure AI Inference (Kimi-K2.6)
-- **Scraping / HTTP** : httpx 0.27, BeautifulSoup 4, markdownify
+- **LLM** : LangChain 0.3 + `langchain-azure-ai` → Azure AI Inference (Kimi-K2.6), avec fallback Groq
+- **Scraping / HTTP** : requests, BeautifulSoup 4 + lxml, markdownify
 - **Frontend** : Next.js 15 (App Router), React 19, TypeScript 5, Tailwind CSS 4
 - **Orchestration** : Docker Compose (chromadb + backend + frontend)
 
@@ -28,6 +28,7 @@ Nauda Palisse — assistant de veille technologique. RAG sur Chroma + injection 
 │   ├── chat.py               # orchestration retrieval + fresh news + LLM
 │   ├── config.py             # settings (env)
 │   ├── schemas.py            # modèles pydantic
+│   ├── utils.py              # helpers partagés (normalize_date, chunk_id)
 │   ├── rag/
 │   │   ├── chroma_client.py  # client HTTP Chroma + collection `articles`
 │   │   ├── retrieval.py      # embedding + query top-k
@@ -40,9 +41,12 @@ Nauda Palisse — assistant de veille technologique. RAG sur Chroma + injection 
 │   └── runtime/
 │       └── fresh_news.py     # fetch live NewsAPI au moment du chat
 ├── scripts/
-│   └── ingest_cli.py         # CLI d'ingestion (news / scrape)
+│   ├── ingest_cli.py         # CLI d'ingestion (news / scrape)
+│   ├── show_before_after.py  # démo : trace un article à travers le pipeline
+│   └── show_fresh_news_io.py # démo : trace un appel fresh_news (input/output)
 ├── tests/
 │   └── acceptance/           # tests d'acceptance de la chaîne d'ingestion
+├── docs/                     # livrables : note de conception, note de flux, schéma
 ├── web/                      # frontend Next.js 15
 │   ├── app/                  # App Router (page principale + layout)
 │   ├── lib/api.ts            # client REST vers le backend
@@ -53,6 +57,12 @@ Nauda Palisse — assistant de veille technologique. RAG sur Chroma + injection 
 ├── pyproject.toml
 └── .env.example
 ```
+
+## Documentation
+
+- `docs/note-conception.md` — choix des sources, modèle des chunks / métadonnées, schéma de flux.
+- `docs/note-flux.md` — le pipeline de bout en bout (ingestion + runtime) et comment le relancer.
+- `docs/schema-flux.md` — le schéma du flux au format Mermaid (s'affiche sur GitHub).
 
 ## Setup
 
@@ -78,16 +88,16 @@ Ingestion (CLI) :
 make ingest                   # passe par scripts/ingest_cli.py
 ```
 
-## Sources potentielles
+## Sources indexées
 
-Voici quelques pistes de sources publiques utilisables pour alimenter l'index :
+Les sources retenues pour cette phase (détail et justification dans `docs/note-conception.md`) :
 
-- **NewsAPI v2** (`/everything`, `/top-headlines`) — documentation : https://newsapi.org/docs
-- **Blogs et agrégateurs techniques** — par exemple Hacker News (front page / item API), DEV.to, Smashing Magazine, lobste.rs
-- **Changelogs produits** — par exemple Vercel, OpenAI, GitHub, Anthropic, Stripe
-- **Pages de docs / annonces** — par exemple les release notes des frameworks de l'écosystème (Next.js, FastAPI, LangChain), les changelogs Python / Node
+- **NewsAPI v2** (`/everything`) — agrégateur, apporte la largeur sur les tendances générales. Doc : https://newsapi.org/docs
+- **GitHub Changelog** (RSS `github.blog/changelog/feed/`) — changelog produit, annonces officielles vérifiées.
+- **Blog Next.js** (RSS `nextjs.org/feed.xml`) — blog technique, écosystème web / JS.
+- **Python Docs** (HTML `docs.python.org/.../whatsnew`) — page de doc / release notes.
 
-Le choix exact des sources reste à arbitrer en fonction des sujets ciblés et de la fraîcheur attendue.
+Autres pistes possibles, non retenues pour l'instant : Hacker News, DEV.to, ou les changelogs Vercel / OpenAI (chargés en JavaScript, ils nécessiteraient un navigateur headless type Playwright).
 
 ## Aller plus loin (optionnel)
 

@@ -24,11 +24,11 @@ def embed(text: str) -> list[float]:
     return vec[0].tolist()
 
 
-def retrieve(query: str, k: int = 8) -> list[dict[str, Any]]:
+def retrieve(query: str, k: int = 8, where: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     try:
         collection = get_collection()
         query_vec = embed(query)
-        result = collection.query(query_embeddings=[query_vec], n_results=k)
+        result = collection.query(query_embeddings=[query_vec], n_results=k, where=where)
     except Exception as exc:
         logger.warning("retrieval failed: %s", exc)
         return []

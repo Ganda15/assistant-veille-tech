@@ -17,9 +17,6 @@ htmlcov/
 dist/
 build/
 
-# uv
-uv.lock
-
 # Env
 .env
 .env.local
@@ -45,9 +42,6 @@ out/
 *.sqlite
 *.db
 chroma-data/
-
-data/
-dbdata/
 
 data/
 dbdata/
